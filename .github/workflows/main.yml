@@ -19,8 +19,9 @@ jobs:
             squashfs-tools mtools dosfstools grub-pc-bin grub-efi-amd64-bin \
             file
 
-      - name: Configure live-build
+      - name: Create build directory and Configure live-build
         run: |
+          mkdir -p build
           cd build
           lb config \
             --distribution bookworm \
@@ -32,8 +33,9 @@ jobs:
             --iso-publisher "WineDesk" \
             --iso-volume "WineDesk-Live"
 
-      - name: Create i386 Hook (Critical for Wine 32-bit)
+      - name: Create i386 Hook (Critical for Wine)
         run: |
+          mkdir -p build
           cd build
           mkdir -p config/hooks/live
           cat > config/hooks/live/enable-i386.hook.chroot << 'EOF'
@@ -46,6 +48,7 @@ jobs:
 
       - name: Define Package List
         run: |
+          mkdir -p build
           cd build
           mkdir -p config/package-lists
           cat > config/package-lists/winedesk.list.chroot << 'EOF'
@@ -69,19 +72,18 @@ jobs:
 
       - name: Inject Openbox, Tint2, Wine & Wi-Fi Configuration
         run: |
+          mkdir -p build
           cd build
           mkdir -p config/includes.chroot/etc/skel/.config/openbox
           mkdir -p config/includes.chroot/etc/skel/.config/tint2
           mkdir -p config/includes.chroot/usr/share/applications
           mkdir -p config/includes.chroot/usr/local/bin
 
-          # Openbox autostart: Tint2 + Wi-Fi applet
           cat > config/includes.chroot/etc/skel/.config/openbox/autostart << 'EOF'
           tint2 &
           nm-applet &
           EOF
 
-          # Tint2: شريط سفلي + أيقونة Wine + منطقة system tray (تظهر فيها أيقونة Wi-Fi)
           cat > config/includes.chroot/etc/skel/.config/tint2/tint2rc << 'EOF'
           panel_position = bottom center horizontal
           panel_size = 100% 30
@@ -101,14 +103,12 @@ jobs:
           launcher_padding = 2 2 3
           EOF
 
-          # سكربت فتح سطح مكتب Wine
           cat > config/includes.chroot/usr/local/bin/wine-desktop << 'EOF'
           #!/bin/bash
           wine explorer /desktop=WineDesk,1024x768 &
           EOF
           chmod +x config/includes.chroot/usr/local/bin/wine-desktop
 
-          # أيقونة Wine في الشريط
           cat > config/includes.chroot/usr/share/applications/wine.desktop << 'EOF'
           [Desktop Entry]
           Name=Wine Desktop
@@ -120,6 +120,7 @@ jobs:
 
       - name: Pre-initialize Wine Prefix (Wine مثبت مسبقاً)
         run: |
+          mkdir -p build
           cd build
           cat > config/hooks/live/wine-init.hook.chroot << 'EOF'
           #!/bin/sh
@@ -139,12 +140,14 @@ jobs:
 
       - name: Build ISO
         run: |
+          mkdir -p build
           cd build
           sudo lb build 2>&1 | tee build.log
           ls -lh *.iso
 
       - name: Verify ISO Bootability
         run: |
+          mkdir -p build
           cd build
           ISO_FILE=$(ls *.iso | head -n 1)
           echo "Checking boot record for: $ISO_FILE"
