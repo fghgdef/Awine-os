@@ -1,0 +1,164 @@
+name: Build WineDesk Live ISO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install live-build and verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y live-build xorriso isolinux syslinux-common \
+            squashfs-tools mtools dosfstools grub-pc-bin grub-efi-amd64-bin \
+            file
+
+      - name: Configure live-build
+        run: |
+          cd build
+          lb config \
+            --distribution bookworm \
+            --architectures amd64 \
+            --binary-images iso-hybrid \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --bootappend-live "boot=live components quiet splash" \
+            --iso-application "WineDesk Live" \
+            --iso-publisher "WineDesk" \
+            --iso-volume "WineDesk-Live"
+
+      - name: Create i386 Hook (Critical for Wine 32-bit)
+        run: |
+          cd build
+          mkdir -p config/hooks/live
+          cat > config/hooks/live/enable-i386.hook.chroot << 'EOF'
+          #!/bin/sh
+          set -e
+          dpkg --add-architecture i386
+          apt-get update
+          EOF
+          chmod +x config/hooks/live/enable-i386.hook.chroot
+
+      - name: Define Package List
+        run: |
+          cd build
+          mkdir -p config/package-lists
+          cat > config/package-lists/winedesk.list.chroot << 'EOF'
+          xorg
+          openbox
+          tint2
+          network-manager
+          network-manager-gnome
+          pcmanfm
+          xterm
+          sudo
+          live-tools
+          user-setup
+          wine
+          wine64
+          wine32
+          fonts-wine
+          lightdm
+          lightdm-gtk-greeter
+          EOF
+
+      - name: Inject Openbox, Tint2, Wine & Wi-Fi Configuration
+        run: |
+          cd build
+          mkdir -p config/includes.chroot/etc/skel/.config/openbox
+          mkdir -p config/includes.chroot/etc/skel/.config/tint2
+          mkdir -p config/includes.chroot/usr/share/applications
+          mkdir -p config/includes.chroot/usr/local/bin
+
+          # Openbox autostart: Tint2 + Wi-Fi applet
+          cat > config/includes.chroot/etc/skel/.config/openbox/autostart << 'EOF'
+          tint2 &
+          nm-applet &
+          EOF
+
+          # Tint2: شريط سفلي + أيقونة Wine + منطقة system tray (تظهر فيها أيقونة Wi-Fi)
+          cat > config/includes.chroot/etc/skel/.config/tint2/tint2rc << 'EOF'
+          panel_position = bottom center horizontal
+          panel_size = 100% 30
+          panel_background_id = 1
+          wm_menu = 0
+          taskbar_mode = single_desktop
+          taskbar_padding = 2 3 2
+          taskbar_background_id = 0
+          task_icon = 1
+          task_text = 1
+          task_centered = 1
+          systray_padding = 2 2 3
+          systray_icon_size = 24
+          time1_format = %H:%M
+          launcher_item_app = /usr/share/applications/wine.desktop
+          launcher_icon_size = 24
+          launcher_padding = 2 2 3
+          EOF
+
+          # سكربت فتح سطح مكتب Wine
+          cat > config/includes.chroot/usr/local/bin/wine-desktop << 'EOF'
+          #!/bin/bash
+          wine explorer /desktop=WineDesk,1024x768 &
+          EOF
+          chmod +x config/includes.chroot/usr/local/bin/wine-desktop
+
+          # أيقونة Wine في الشريط
+          cat > config/includes.chroot/usr/share/applications/wine.desktop << 'EOF'
+          [Desktop Entry]
+          Name=Wine Desktop
+          Exec=/usr/local/bin/wine-desktop
+          Icon=wine
+          Type=Application
+          Categories=Utility;
+          EOF
+
+      - name: Pre-initialize Wine Prefix (Wine مثبت مسبقاً)
+        run: |
+          cd build
+          cat > config/hooks/live/wine-init.hook.chroot << 'EOF'
+          #!/bin/sh
+          set -e
+          export WINEPREFIX=/root/.wine
+          export WINEDEBUG=-all
+          wineboot --init
+          wineserver -k || true
+          sleep 2
+          mkdir -p /etc/skel
+          cp -a /root/.wine /etc/skel/.wine
+          rm -rf /root/.wine
+          chown -R 1000:1000 /etc/skel/.wine || true
+          echo "Wine prefix pre-initialized and copied to /etc/skel/.wine"
+          EOF
+          chmod +x config/hooks/live/wine-init.hook.chroot
+
+      - name: Build ISO
+        run: |
+          cd build
+          sudo lb build 2>&1 | tee build.log
+          ls -lh *.iso
+
+      - name: Verify ISO Bootability
+        run: |
+          cd build
+          ISO_FILE=$(ls *.iso | head -n 1)
+          echo "Checking boot record for: $ISO_FILE"
+          if xorriso -indev "$ISO_FILE" -report_el_torito plain 2>&1 | grep -q "El Torito"; then
+            echo "✅ SUCCESS: ISO has a valid El Torito boot record."
+          else
+            echo "❌ FATAL: No boot record found."
+            exit 1
+          fi
+          file "$ISO_FILE" | grep -q "ISO 9660" && echo "✅ Filesystem OK"
+
+      - name: Upload ISO Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winedesk-live-iso
+          path: build/*.iso
+          retention-days: 7
