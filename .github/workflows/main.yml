@@ -1,173 +1,252 @@
-چname: Build WineDesk Live ISO
+name: Build WineDesk Live ISO
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
+    paths:
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  build-iso:
     runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
     steps:
-      - name: Checkout repository
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install live-build and verification tools
+      - name: Create WineDesk Live configuration
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y live-build xorriso isolinux syslinux-common \
-            squashfs-tools mtools dosfstools grub-pc-bin grub-efi-amd64-bin \
-            file
+          set -euxo pipefail
 
-      - name: Create build directory and Configure live-build
-        run: |
-          mkdir -p build
-          cd build
-          lb config \
-            --distribution bookworm \
-            --architectures amd64 \
-            --binary-images iso-hybrid \
-            --archive-areas "main contrib non-free non-free-firmware" \
-            --parent-mirror-bootstrap "http://deb.debian.org/debian/" \
-            --parent-mirror-chroot "http://deb.debian.org/debian/" \
-            --parent-mirror-binary "http://deb.debian.org/debian/" \
-            --mirror-bootstrap "http://deb.debian.org/debian/" \
-            --mirror-chroot "http://deb.debian.org/debian/" \
-            --mirror-binary "http://deb.debian.org/debian/" \
-            --bootappend-live "boot=live components quiet splash" \
-            --iso-application "WineDesk Live" \
-            --iso-publisher "WineDesk" \
-            --iso-volume "WineDesk-Live"
-
-      - name: Create i386 Hook (Critical for Wine)
-        run: |
-          mkdir -p build
-          cd build
-          mkdir -p config/hooks/live
-          cat > config/hooks/live/enable-i386.hook.chroot << 'EOF'
-          #!/bin/sh
-          set -e
-          dpkg --add-architecture i386
-          apt-get update
-          EOF
-          chmod +x config/hooks/live/enable-i386.hook.chroot
-
-      - name: Define Package List
-        run: |
-          mkdir -p build
-          cd build
           mkdir -p config/package-lists
-          cat > config/package-lists/winedesk.list.chroot << 'EOF'
+          mkdir -p config/hooks/normal
+          mkdir -p config/includes.chroot/etc/xdg/openbox
+          mkdir -p config/includes.chroot/etc/xdg/tint2
+          mkdir -p config/includes.chroot/usr/local/bin
+          mkdir -p config/includes.chroot/usr/share/applications
+          mkdir -p config/includes.chroot/etc/lightdm/lightdm.conf.d
+
+          cat > config/package-lists/winedesk.list.chroot <<'PACKAGES'
+          live-boot
+          live-config
+          live-config-systemd
+          systemd-sysv
           xorg
-          openbox
-          tint2
-          network-manager
-          network-manager-gnome
-          pcmanfm
-          xterm
-          sudo
-          live-tools
-          user-setup
-          wine
-          wine64
-          wine32
-          fonts-wine
           lightdm
           lightdm-gtk-greeter
-          EOF
+          openbox
+          tint2
+          pcmanfm
+          lxterminal
+          dbus-x11
+          network-manager
+          network-manager-gnome
+          polkitd
+          gvfs
+          gvfs-backends
+          udisks2
+          xdg-utils
+          fonts-dejavu
+          fonts-liberation
+          sudo
+          ca-certificates
+          curl
+          wget
+          nano
+          less
+          wine
+          wine64
+          PACKAGES
 
-      - name: Inject Openbox, Tint2, Wine & Wi-Fi Configuration
-        run: |
-          mkdir -p build
-          cd build
-          mkdir -p config/includes.chroot/etc/skel/.config/openbox
-          mkdir -p config/includes.chroot/etc/skel/.config/tint2
-          mkdir -p config/includes.chroot/usr/share/applications
-          mkdir -p config/includes.chroot/usr/local/bin
-
-          cat > config/includes.chroot/etc/skel/.config/openbox/autostart << 'EOF'
+          cat > config/includes.chroot/etc/xdg/openbox/autostart <<'AUTOSTART'
+          # Start the panel, desktop icons/file manager, and network tray.
           tint2 &
+          pcmanfm --desktop --profile=lxde &
           nm-applet &
-          EOF
+          AUTOSTART
+          chmod 755 config/includes.chroot/etc/xdg/openbox/autostart
 
-          cat > config/includes.chroot/etc/skel/.config/tint2/tint2rc << 'EOF'
+          cat > config/includes.chroot/etc/xdg/tint2/tint2rc <<'TINT2'
+          # WineDesk Live panel
+          panel_items = LTSCP
+          panel_monitor = all
           panel_position = bottom center horizontal
-          panel_size = 100% 30
+          panel_size = 100% 36
+          panel_margin = 0 0
+          panel_padding = 6 3 6
           panel_background_id = 1
-          wm_menu = 0
+          wm_menu = 1
+          panel_dock = 0
+          panel_layer = top
+          panel_shrink = 0
+          autohide = 0
           taskbar_mode = single_desktop
-          taskbar_padding = 2 3 2
-          taskbar_background_id = 0
-          task_icon = 1
+          taskbar_hide_if_empty = 0
+          taskbar_padding = 3 2 3
+          task_icon_size = 22
           task_text = 1
-          task_centered = 1
-          systray_padding = 2 2 3
-          systray_icon_size = 24
+          task_centered = 0
+          task_maximum_size = 180 28
+          task_font = Sans 9
+          task_tooltip = 1
+          task_thumbnail = 0
+          taskbar_background_id = 0
+          task_active_background_id = 2
+          task_urgent_background_id = 3
+          task_iconified = 1
+          task_lclick_action = toggle
+          task_mclick_action = close
+          task_rclick_action = none
           time1_format = %H:%M
-          launcher_item_app = /usr/share/applications/wine.desktop
+          time1_font = Sans 9
+          clock_padding = 6 0
+          clock_background_id = 0
+          clock_tooltip = %A, %d %B %Y
+          systray_padding = 4 2 4
+          systray_background_id = 0
+          systray_sort = ascending
+          launcher_padding = 4 2 4
+          launcher_background_id = 0
           launcher_icon_size = 24
-          launcher_padding = 2 2 3
-          EOF
+          launcher_item_app = /usr/share/applications/pcmanfm.desktop
+          launcher_item_app = /usr/share/applications/lxterminal.desktop
+          launcher_item_app = /usr/share/applications/winedesk-winecfg.desktop
+          battery_tooltip = 1
+          tooltip_show_timeout = 0.5
+          tooltip_hide_timeout = 0.1
+          tooltip_padding = 4 4
+          background_color = #222222 90
+          border_color = #444444 100
+          panel_background_id = 1
+          rounded = 0
+          border_width = 0
+          background_color = #20242b 95
+          border_color = #20242b 100
+          background_color = #3a4658 100
+          border_color = #3a4658 100
+          background_color = #a94442 100
+          border_color = #a94442 100
+          TINT2
 
-          cat > config/includes.chroot/usr/local/bin/wine-desktop << 'EOF'
-          #!/bin/bash
-          wine explorer /desktop=WineDesk,1024x768 &
-          EOF
-          chmod +x config/includes.chroot/usr/local/bin/wine-desktop
+          cat > config/includes.chroot/usr/local/bin/winedesk-winecfg <<'WINECFG'
+          #!/bin/sh
+          exec winecfg
+          WINECFG
+          chmod 755 config/includes.chroot/usr/local/bin/winedesk-winecfg
 
-          cat > config/includes.chroot/usr/share/applications/wine.desktop << 'EOF'
+          cat > config/includes.chroot/usr/share/applications/winedesk-winecfg.desktop <<'DESKTOP'
           [Desktop Entry]
-          Name=Wine Desktop
-          Exec=/usr/local/bin/wine-desktop
-          Icon=wine
+          Version=1.0
           Type=Application
-          Categories=Utility;
-          EOF
+          Name=Wine Configuration
+          Comment=Configure Wine and Windows compatibility settings
+          Exec=/usr/local/bin/winedesk-winecfg
+          Icon=wine
+          Terminal=false
+          Categories=System;Emulator;
+          DESKTOP
 
-      - name: Pre-initialize Wine Prefix (Wine مثبت مسبقاً)
-        run: |
-          mkdir -p build
-          cd build
-          cat > config/hooks/live/wine-init.hook.chroot << 'EOF'
+          cat > config/includes.chroot/etc/lightdm/lightdm.conf.d/10-winedesk-autologin.conf <<'LIGHTDM'
+          [Seat:*]
+          autologin-user=user
+          autologin-user-timeout=0
+          user-session=openbox
+          greeter-session=lightdm-gtk-greeter
+          LIGHTDM
+
+          cat > config/hooks/normal/010-winedesk-desktop.hook.chroot <<'HOOK'
           #!/bin/sh
           set -e
-          export WINEPREFIX=/root/.wine
-          export WINEDEBUG=-all
-          wineboot --init
-          wineserver -k || true
-          sleep 2
-          mkdir -p /etc/skel
-          cp -a /root/.wine /etc/skel/.wine
-          rm -rf /root/.wine
-          chown -R 1000:1000 /etc/skel/.wine || true
-          echo "Wine prefix pre-initialized and copied to /etc/skel/.wine"
-          EOF
-          chmod +x config/hooks/live/wine-init.hook.chroot
+          chmod 755 /usr/local/bin/winedesk-winecfg
+          if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications || true
+          fi
+          HOOK
+          chmod 755 config/hooks/normal/010-winedesk-desktop.hook.chroot
 
-      - name: Build ISO
+      - name: Build bootable ISO in privileged Debian container
+        shell: bash
         run: |
-          mkdir -p build
-          cd build
-          sudo lb build 2>&1 | tee build.log
-          ls -lh *.iso
+          set -euxo pipefail
 
-      - name: Verify ISO Bootability
+          docker run --privileged --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            debian:trixie \
+            bash -euxc '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                live-build debootstrap squashfs-tools xorriso \
+                grub-pc-bin grub-efi-amd64-bin mtools dosfstools \
+                syslinux-common isolinux rsync cpio
+
+              lb --version
+
+              lb config \
+                --distribution trixie \
+                --architectures amd64 \
+                --binary-images iso-hybrid \
+                --bootloaders "grub-efi,syslinux" \
+                --archive-areas "main contrib non-free non-free-firmware" \
+                --debian-installer live \
+                --bootappend-live "boot=live components username=user hostname=winedesk locales=en_US.UTF-8 keyboard-layouts=us"
+
+              lb build
+              ls -lh ./*.iso
+            '
+
+      - name: Install torrent and checksum tools
         run: |
-          mkdir -p build
-          cd build
-          ISO_FILE=$(ls *.iso | head -n 1)
-          echo "Checking boot record for: $ISO_FILE"
-          if xorriso -indev "$ISO_FILE" -report_el_torito plain 2>&1 | grep -q "El Torito"; then
-            echo "✅ SUCCESS: ISO has a valid El Torito boot record."
-          else
-            echo "❌ FATAL: No boot record found."
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mktorrent
+
+      - name: Prepare beta release files
+        id: release_files
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          ISO_SOURCE="$(find . -maxdepth 1 -type f -name '*.iso' -print -quit)"
+          if [ -z "$ISO_SOURCE" ]; then
+            echo "No ISO file was produced by live-build."
             exit 1
           fi
-          file "$ISO_FILE" | grep -q "ISO 9660" && echo "✅ Filesystem OK"
 
-      - name: Upload ISO Artifact
-        uses: actions/upload-artifact@v4
+          ISO_NAME="WineDesk-Beta-amd64.iso"
+          mv "$ISO_SOURCE" "$ISO_NAME"
+
+          TAG_NAME="beta-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "iso_name=$ISO_NAME" >> "$GITHUB_OUTPUT"
+
+          sha256sum "$ISO_NAME" > SHA256SUMS
+
+          WEBSEED_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}/${ISO_NAME}"
+
+          mktorrent \
+            -a "udp://tracker.opentrackr.org:1337/announce" \
+            -a "udp://open.stealth.si:80/announce" \
+            -a "udp://tracker.torrent.eu.org:451/announce" \
+            -w "$WEBSEED_URL" \
+            -o "${ISO_NAME}.torrent" \
+            "$ISO_NAME"
+
+          ls -lh "$ISO_NAME" "${ISO_NAME}.torrent" SHA256SUMS
+
+      - name: Publish WineDesk Beta release
+        uses: softprops/action-gh-release@v2
         with:
-          name: winedesk-live-iso
-          path: build/*.iso
-          retention-days: 7
+          tag_name: ${{ steps.release_files.outputs.tag_name }}
+          name: WineDesk Beta ${{ github.run_number }}.${{ github.run_attempt }}
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            WineDesk-Beta-amd64.iso
+            WineDesk-Beta-amd64.iso.torrent
+            SHA256SUMS
